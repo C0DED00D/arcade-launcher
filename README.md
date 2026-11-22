@@ -17,7 +17,7 @@ No ROMs, BIOS files or games are included or downloaded. You need your own, lega
 Needs Windows 10/11 (64-bit), a GPU with OpenGL 3.3 and Direct3D 9/11, and the [.NET 10 SDK](https://dotnet.microsoft.com/download) to build the launcher.
 
 ```powershell
-git clone <this repository> arcade
+git clone https://github.com/C0DED00D/arcade-launcher.git arcade
 cd arcade
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -Shortcut
 ```
