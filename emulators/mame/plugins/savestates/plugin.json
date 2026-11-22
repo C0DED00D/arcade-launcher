@@ -1,0 +1,10 @@
+{
+  "plugin": {
+    "name": "savestates",
+    "description": "Arcade launcher: 10 rotating save states with a screenshot picker",
+    "version": "1.0",
+    "author": "Arcade launcher",
+    "type": "plugin",
+    "start": "false"
+  }
+}

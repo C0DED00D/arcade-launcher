@@ -1,0 +1,10 @@
+{
+	"plugin": {
+		"name": "freeplay",
+		"description": "Arcade launcher: free play for every game",
+		"version": "1.0",
+		"author": "Arcade launcher",
+		"type": "plugin",
+		"start": "false"
+	  }
+}

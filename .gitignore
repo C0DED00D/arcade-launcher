@@ -1,0 +1,71 @@
+# Whitelist: everything is ignored unless listed here, so ROMs, discs, BIOS files, saves, NVRAM, snapshots and
+# per-machine settings can never be committed by accident.
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/install.ps1
+!/docs/
+
+# launcher source
+!/launcher/
+/launcher/bin/
+/launcher/obj/
+
+# config: scripts and examples only (settings.json, input.json, games.json and catver.ini are per machine)
+!/config/
+/config/*
+!/config/*.lua
+!/config/games.example.json
+
+# emulators: only the launcher's own files; install.ps1 downloads the emulators themselves
+!/emulators/
+/emulators/*
+
+!/emulators/mame/
+/emulators/mame/*
+!/emulators/mame/mame.ini
+!/emulators/mame/ui.ini
+!/emulators/mame/plugin.ini
+!/emulators/mame/ReShade.ini
+!/emulators/mame/reshade/
+/emulators/mame/reshade/*
+!/emulators/mame/reshade/GuestCRT.ini
+!/emulators/mame/ini/
+/emulators/mame/ini/*
+!/emulators/mame/ini/raster.ini
+!/emulators/mame/ini/vector.ini
+!/emulators/mame/bgfx/
+/emulators/mame/bgfx/*
+!/emulators/mame/bgfx/chains/
+/emulators/mame/bgfx/chains/*
+!/emulators/mame/bgfx/chains/arcade-geom.json
+!/emulators/mame/plugins/
+/emulators/mame/plugins/*
+!/emulators/mame/plugins/freeplay/
+!/emulators/mame/plugins/savestates/
+/emulators/mame/plugins/freeplay/local.lua
+
+!/emulators/flycast/
+/emulators/flycast/*
+!/emulators/flycast/ReShade.ini
+!/emulators/flycast/ArcadeCRT.ini
+
+!/emulators/bigpemu/
+/emulators/bigpemu/*
+!/emulators/bigpemu/Data/
+/emulators/bigpemu/Data/*
+!/emulators/bigpemu/Data/ScreenEffects/
+/emulators/bigpemu/Data/ScreenEffects/*
+!/emulators/bigpemu/Data/ScreenEffects/arcade_crt.dstack
+!/emulators/bigpemu/Data/ScreenEffects/arcade_crt/
+
+!/emulators/reshade-shaders/
+/emulators/reshade-shaders/*
+!/emulators/reshade-shaders/Shaders/
+/emulators/reshade-shaders/Shaders/*
+!/emulators/reshade-shaders/Shaders/ArcadeCRT.fx
+!/emulators/reshade-shaders/Shaders/CRT-Guest-Advanced.fx
+!/emulators/reshade-shaders/Shaders/ReShade.fxh
+
+# (NOTES.md: personal notes about this machine's games, not committed - covered by /* above)

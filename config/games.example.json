@@ -1,0 +1,23 @@
+// Copy to config\games.json to change how games show up in the menu. Keys are MAME set names (the zip's name),
+// or for console games the launcher's own name: dc_<title> (Dreamcast), ss_<title> (Saturn), jag_<title> (Jaguar),
+// the title in lower case with everything but letters and digits removed. app\launcher.log lists every game's name.
+{
+  "examplegame": {
+    "title": "Example Game",         // menu title
+    "genre": "Shooter",              // menu genre (otherwise from catver.ini, else OTHER)
+    "maker": "Example Corp",         // overrides MAME's manufacturer
+    "year": "1991",
+    "players": 2,
+    "version": "US",                 // the small text after the title
+    "hidden": false                  // true leaves it out of the menu
+  },
+  "dc_exampledisc": {
+    "title": "Example Disc Game",
+    "year": "2000",
+    "maker": "Example Corp",
+    "players": 2,
+    "genre": "Fighter",
+    "crt": true,                                  // Flycast: run with the ReShade CRT filter
+    "flycast": { "rend.Resolution": 480 }        // Flycast: emu.cfg [config] keys for this game only
+  }
+}
