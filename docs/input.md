@@ -7,7 +7,7 @@ It has four parts:
 | Section | What it does |
 |---|---|
 | `Menu` | Moving around the menu: `Up` `Down` `Left` `Right` `Start` `Back` `Option` (game CRT look) `Filter` (grouping) `Exit` |
-| `Hotkeys` | Watched while a game runs, for every emulator: `ExitGame` (hold it to go back to the menu), `SaveState`, `LoadState` (MAME) |
+| `Hotkeys` | Watched while a game runs, for every emulator: `ExitGame` (hold it to go back to the menu), `SaveState`, `LoadState`, `Pause` (MAME; pressed as F6 / F7 / P, so a mouse button works even in games with MAME's mouse input off) |
 | `Mame` | MAME's own controls. The launcher turns this into `emulators\mame\ctrlr\launcher.cfg` before each game |
 | `StickDeadZone` | How far (0.1–0.9) a stick or analog axis must move before it counts as a direction |
 
@@ -82,11 +82,86 @@ A keyboard-only cabinet: an encoder sending keys doesn't need the launcher to wa
 ```
 
 - **Controller numbers.** Inside `Mame`, `Pad1`/`Joy1` both mean MAME's controller 1 (`JOYCODE_1`), which isn't necessarily Windows' joystick 1. `Devices` pins MAME's numbers to devices by their MAME device ID: `XInput Player 1`…`4` for XInput pads, the product name for DirectInput ones (MAME's *Input Devices* menu shows them, as does `mame -verbose`). With XInput pads and DirectInput sticks mixed, pin them all.
-- **XInput pads in MAME:** `A B X Y LB RB LS RS` are MAME buttons 1–8, `Start`/`Back` are MAME's START/SELECT, the d-pad is hat 1, the left stick X/Y axes. MAME doesn't see Guide. The triggers and right stick aren't translated: use `Mame.` codes for those (MAME's input menu shows the code when you press them).
-- **Per-game changes** go in `Games`, keyed by MAME set name.
+- **XInput pads in MAME:** `A B X Y LB RB LS RS` are MAME buttons 1–8, `Start`/`Back` are MAME's START/SELECT, the d-pad is hat 1, the left stick X/Y axes, and `LT`/`RT` work as buttons (MAME's sliders 1/2). MAME doesn't see Guide. The right stick isn't translated: use `Mame.` codes for it (MAME's input menu shows the code when you move it).
+- **Arcade sticks in XInput mode** (X-Arcade Mode 4 and the like) are two XInput pads, one per player, so `Pad1`/`Pad2` cover them. See [the X-Arcade example](#example-x-arcade-in-xinput-mode).
+- **Per-game changes** go in `Games`, keyed by MAME set name. One key can list several sets, comma-separated (`"<set>, <set>"`).
 - **Analog controls** (spinners, trackballs, paddles, wheels) are set per game in `emulators\mame\ini\<set>.ini` with MAME's own options (`mouse 1`, `trackball_device mouse`, `dial_device mouse`…), not here.
 - `"Generate": false` leaves MAME's controls entirely to you: the launcher stops writing `ctrlr\launcher.cfg`, and `mame.ini`'s `ctrlr` setting applies.
 - `app\ArcadeLauncher.exe --write-ctrlr` writes the file without starting anything, so you can look at it.
+
+## Example: X-Arcade in XInput mode
+
+With the mode switch on 4, an X-Arcade (Tri-Mode board) is two XInput pads, left side = `Pad1`, right side = `Pad2`. Each side sends:
+
+| Button | Sends | MAME |
+|---|---|---|
+| Stick | `Up Down Left Right` (d-pad) | joystick |
+| Middle row 1 2 3 | `A B RB` | buttons 1 2 3 |
+| Top row 1 2 3 | `X Y LB` | buttons 4 5 6 |
+| Bottom row 1 2 | `LT RT` | buttons 7 8 |
+| Player 1 / Player 2 | `Start` | start |
+| Pinball button (side) | `Back` | coin |
+
+The trackball is a mouse: its left and right buttons are P1 buttons 1 and 2 (in games that turn MAME's mouse input on), and the red button is the middle button, used here as pause. No Guide button and no stick clicks, so the other hotkeys use combinations: hold the pinball button + Start to leave a game, pinball button + bottom-row 2 to save, pinball button + bottom-row 1 to load (hold for the picker).
+
+```json
+"Hotkeys": {
+  "ExitGame":  [ "Pad.Guide", "Pad.Back + Pad.Start" ],
+  "SaveState": [ "Pad.RS", "Pad.Back + Pad.RT" ],
+  "LoadState": [ "Pad.LS", "Pad.Back + Pad.LT" ],
+  "Pause":     [ "Mouse.Middle" ]
+},
+"Mame": {
+  "Ports": {
+    "P1_BUTTON1": [ "Key.LControlKey", "Mouse.Left", "Pad1.A" ],
+    "P1_BUTTON2": [ "Key.LMenu", "Mouse.Right", "Pad1.B" ],
+    "P1_BUTTON3": [ "Key.Space", "Pad1.RB" ],
+    "P1_BUTTON4": [ "Key.LShiftKey", "Pad1.X" ],
+    "P1_BUTTON5": [ "Key.Z", "Pad1.Y" ],
+    "P1_BUTTON6": [ "Key.X", "Pad1.LB" ],
+    "P1_BUTTON7": [ "Key.C", "Pad1.LT" ],
+    "P1_BUTTON8": [ "Pad1.RT" ],
+    ...the same for P2 with Pad2
+  },
+  "Games": {
+    // 4-button games: middle 1 2, top 1 2
+    "<set>, <set>, ...": {
+      "P1_BUTTON3": [ "Key.Space", "Pad1.X" ],
+      "P1_BUTTON4": [ "Key.LShiftKey", "Pad1.Y" ],
+      ...the same for P2
+    },
+    // 6-button fighters: punches on the top row, kicks on the middle row
+    "<set>, <set>, ...": {
+      "P1_BUTTON1": [ "Key.LControlKey", "Pad1.X" ],
+      "P1_BUTTON2": [ "Key.LMenu", "Pad1.Y" ],
+      "P1_BUTTON3": [ "Key.Space", "Pad1.LB" ],
+      "P1_BUTTON4": [ "Key.LShiftKey", "Pad1.A" ],
+      "P1_BUTTON5": [ "Key.Z", "Pad1.B" ],
+      "P1_BUTTON6": [ "Key.X", "Pad1.RB" ],
+      ...the same for P2
+    }
+  }
+}
+```
+
+## Example: players 3 and 4 on a Bliss-Box
+
+A Bliss-Box 4-Play in HID mode is four DirectInput controllers, one per port, named `Gamer-Pro Advanced.1` to `.4` (USB `VID_16D0`, PID `0D04`–`0D07`). Plug it straight into the PC: it doesn't work through a USB hub. With a 4-button pad the stick is the hat, the buttons are `Button1`–`Button4`, Select is `Button5` and Start is `Button6`. Pin the ports to MAME controller numbers that are still free, then map them:
+
+```json
+"Devices": { ..., "JOYCODE_4": "Gamer-Pro Advanced.1", "JOYCODE_5": "Gamer-Pro Advanced.2" },
+"Ports": {
+  "P3_JOYSTICK_UP": [ "Key.I", "Joy4.PovUp" ],
+  ...
+  "P3_BUTTON1": [ "Key.RControlKey", "Joy4.Button1" ],
+  ...
+  "START3": [ "Key.D3", "Joy4.Button6" ],
+  "COIN3":  [ "Key.D7", "Joy4.Button5" ],
+  ...the same for P4 with Joy5
+}
+```
+
+MAME's *Input (this machine)* menu shows a game's button count (as do the `<control buttons=...>` entries of `mame -listxml`).
 
 ## Other emulators
 

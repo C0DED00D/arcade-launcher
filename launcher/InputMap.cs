@@ -123,6 +123,8 @@ static class InputDevices
             return (v - lo) / (double)(hi - lo) * 2 - 1;  // -1 .. 1
         }
         public bool HasAxis(int i) => i < 2 || (Caps.wCaps & (i switch { 2 => 1u, 3 => 2u, 4 => 4u, _ => 8u })) != 0;
+        // JOYCAPS_HASPOV: a controller without a hat (e.g. an Arduino joystick) reports dwPOV = 0, which would read as "up"
+        public bool HasPov => (Caps.wCaps & 0x10) != 0;
     }
     struct JoyCaps { public uint wXmin, wXmax, wYmin, wYmax, wZmin, wZmax, wRmin, wRmax, wUmin, wUmax, wVmin, wVmax, wCaps, wNumButtons; }
 
@@ -265,7 +267,7 @@ static class InputDevices
             return c[1] == '+' ? v > StickDeadZone : v < -StickDeadZone;
         }
         int pov = j.State.dwPOV;  // hundredths of a degree clockwise from up, 0xFFFF = centred
-        bool centred = pov < 0 || pov >= 36000;
+        bool centred = !j.HasPov || pov < 0 || pov >= 36000;
         switch (c.ToLowerInvariant())
         {
             case "povup": return !centred && (pov >= 31500 || pov <= 4500);
@@ -357,13 +359,17 @@ public class InputConfig
     /// While a game runs (the launcher watches these in the background, for every emulator):
     /// ExitGame (hold for Settings.ExitHoldSeconds) - back to the menu, closing the emulator properly.
     /// SaveState / LoadState (MAME) - pressed as F6 / F7 for the save-state plugin; hold LoadState for the picker.
-    /// Keyboard keys aren't watched for SaveState/LoadState (press F6/F7 themselves).
+    /// Pause (MAME) - pressed as P (MAME's pause key); none by default.
+    /// PauseSwitch (MAME) - an on/off switch: turning it on pauses, turning it off resumes; none by default.
+    /// Keyboard keys aren't watched for SaveState/LoadState/Pause (press F6/F7/P themselves).
     /// </summary>
     public Dictionary<string, List<string>> Hotkeys { get; set; } = new(StringComparer.OrdinalIgnoreCase)
     {
         ["ExitGame"] = new() { "Pad.Guide", "Pad.Back + Pad.Start" },
         ["SaveState"] = new() { "Pad.RS" },
         ["LoadState"] = new() { "Pad.LS" },
+        ["Pause"] = new(),
+        ["PauseSwitch"] = new(),
     };
 
     public MameInput Mame { get; set; } = new();
@@ -390,8 +396,25 @@ public class InputConfig
         /// </summary>
         public Dictionary<string, List<string>> Ports { get; set; } = DefaultPorts();
 
-        /// <summary>Per-game changes on top of Ports: { "&lt;MAME set name&gt;": { "P1_BUTTON2": [ ... ] } }.</summary>
+        /// <summary>
+    /// Per-game changes on top of Ports: { "&lt;MAME set name&gt;": { "P1_BUTTON2": [ ... ] } }. A key can list several
+    /// sets separated by commas ("sf2, sfa3"); MAME applies a parent's entry to its clones.
+    /// </summary>
         public Dictionary<string, Dictionary<string, List<string>>> Games { get; set; } = new();
+
+        /// <summary>
+        /// Sets (or parents) that save a state when left with the ExitGame hotkey, so the next start offers to carry on
+        /// (the save-state picker opens at launch when a game has saves). "*" = every MAME game: plugins\savestates
+        /// itself refuses games whose drivers can't save (unless its local.lua allows them), so nothing bad is written.
+        /// </summary>
+        public List<string> SaveOnExit { get; set; } = new() { "*" };
+
+        /// <summary>
+        /// Port changes for every game with at most FewButtonsMax buttons (MAME's own count), on top of Ports. A Games
+        /// entry for the set or its parent still wins, port by port. Applied to the game being launched only.
+        /// </summary>
+        public Dictionary<string, List<string>> FewButtons { get; set; } = new();
+        public int FewButtonsMax { get; set; } = 4;
     }
 
     static Dictionary<string, List<string>> DefaultPorts()
@@ -435,6 +458,8 @@ public class InputConfig
     internal InputBindings ExitGame { get; private set; } = new();
     internal InputBindings SaveState { get; private set; } = new();
     internal InputBindings LoadState { get; private set; } = new();
+    internal InputBindings Pause { get; private set; } = new();
+    internal InputBindings PauseSwitch { get; private set; } = new();
 
     static readonly JsonSerializerOptions Opts = new() { WriteIndented = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
@@ -506,6 +531,8 @@ public class InputConfig
         ExitGame = InputBindings.From(Hotkeys.GetValueOrDefault("ExitGame"), "Hotkeys.ExitGame");
         SaveState = InputBindings.From(Hotkeys.GetValueOrDefault("SaveState"), "Hotkeys.SaveState");
         LoadState = InputBindings.From(Hotkeys.GetValueOrDefault("LoadState"), "Hotkeys.LoadState");
+        Pause = InputBindings.From(Hotkeys.GetValueOrDefault("Pause"), "Hotkeys.Pause");
+        PauseSwitch = InputBindings.From(Hotkeys.GetValueOrDefault("PauseSwitch"), "Hotkeys.PauseSwitch");
         if (ExitGame.List.Count == 0) Log.Write("input.json: no Hotkeys.ExitGame binding - games can only be left from the emulator itself");
     }
 }
@@ -515,7 +542,7 @@ static class MameCtrlr
 {
     public const string Name = "launcher";
 
-    public static bool Write(InputConfig cfg, string mameDir)
+    public static bool Write(InputConfig cfg, string mameDir, GameInfo? launching = null)
     {
         if (!cfg.Mame.Generate) return false;
         try
@@ -531,7 +558,24 @@ static class MameCtrlr
             Ports(sb, cfg.Mame.Ports, "Mame.Ports");
             sb.AppendLine("    </input>");
             sb.AppendLine("  </system>");
-            foreach (var (set, ports) in cfg.Mame.Games)
+            // a Games key can name several sets ("sf2, sfa3"); a set named in more than one key gets all of them, later ones winning
+            var games = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, ports) in cfg.Mame.Games)
+                foreach (var set in key.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (!games.TryGetValue(set, out var merged)) games[set] = merged = new();
+                    foreach (var (type, list) in ports) merged[type] = list;
+                }
+            // games with few buttons: Mame.FewButtons, then the set's parent's and the set's own Games entries
+            if (launching is { Buttons: > 0 } g && g.Buttons <= cfg.Mame.FewButtonsMax && cfg.Mame.FewButtons.Count > 0)
+            {
+                var merged = new Dictionary<string, List<string>>(cfg.Mame.FewButtons);
+                foreach (var set in new[] { g.CloneOf, g.Set })
+                    if (!string.IsNullOrEmpty(set) && games.TryGetValue(set, out var own))
+                        foreach (var (type, list) in own) merged[type] = list;
+                games[g.Set] = merged;
+            }
+            foreach (var (set, ports) in games)
             {
                 sb.AppendLine($"  <system name=\"{Esc(set)}\">");
                 sb.AppendLine("    <input>");
@@ -600,7 +644,9 @@ static class MameCtrlr
                     "up" => "HAT1UP", "down" => "HAT1DOWN", "left" => "HAT1LEFT", "right" => "HAT1RIGHT",
                     "lstickup" => "YAXIS_UP_SWITCH", "lstickdown" => "YAXIS_DOWN_SWITCH",
                     "lstickleft" => "XAXIS_LEFT_SWITCH", "lstickright" => "XAXIS_RIGHT_SWITCH",
-                    _ => null,  // Guide isn't visible to MAME; triggers / right stick: use Mame.<code> from MAME's input menu
+                    // the triggers are MAME sliders that rest at 0 and go negative when pulled (checked on MAME 0.289)
+                    "lt" => "SLIDER1_NEG_SWITCH", "rt" => "SLIDER2_NEG_SWITCH",
+                    _ => null,  // Guide isn't visible to MAME; right stick: use Mame.<code> from MAME's input menu
                 };
                 return item == null ? null : j + item;
             }

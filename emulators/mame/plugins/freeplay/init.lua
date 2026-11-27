@@ -18,6 +18,9 @@ local COIN_END, START_BEGIN, START_END = 6, 18, 28
 -- Per-game tables, from local.lua beside this file (copy local.example.lua): which games were set to free play in
 -- their own operator menus, and which keep a credit topped up in RAM. Nothing here is game-specific.
 NATIVE, CREDIT_KEEP = { }, { }
+-- Input codes wired to on/off switches rather than buttons (e.g. 'JOYCODE_3_BUTTON5'): flipping one either way
+-- counts as pressing Start, since it may already be on when the game boots.
+TOGGLES = { }
 do
 	local ok, t = pcall(function()
 		local p = manager.plugins['freeplay']
@@ -26,6 +29,7 @@ do
 	if ok and type(t) == 'table' then
 		NATIVE = t.native or NATIVE
 		CREDIT_KEEP = t.credit_keep or CREDIT_KEEP
+		TOGGLES = t.toggles or TOGGLES
 	elseif not ok and not tostring(t):find('No such file') and not tostring(t):find('cannot open') then
 		emu.print_error('freeplay: local.lua: ' .. tostring(t))
 	end
@@ -103,7 +107,11 @@ function freeplay.startplugin()
 			for _, field in pairs(port.fields) do
 				local cp, sp = coins[field.type], starts[field.type]
 				if cp then
+					-- (some boards have the same coin input twice, e.g. main and sound board, and only one is
+					-- read: press them all)
 					players[cp] = players[cp] or { }
+					players[cp].coins = players[cp].coins or { }
+					table.insert(players[cp].coins, field)
 					players[cp].coin = field
 				elseif sp then
 					players[sp] = players[sp] or { }
@@ -136,6 +144,16 @@ function freeplay.startplugin()
 				pl.start:set_input_seq('standard', empty)
 				pl.frame = nil
 				pl.down = false
+				-- on/off switches in this player's Start mapping, with their state at boot
+				pl.toggles = { }
+				local tokens = ' ' .. input:seq_to_tokens(pl.seq) .. ' '
+				for _, tok in ipairs(TOGGLES) do
+					if tokens:find(' ' .. tok .. ' ', 1, true) then
+						local code = input:code_from_token(tok)
+						pl.toggles[#pl.toggles + 1] = { code = code, on = input:code_pressed(code) }
+						emu.print_verbose('freeplay: P' .. p .. ' ' .. tok .. ' is an on/off switch, now ' .. (input:code_pressed(code) and 'on' or 'off'))
+					end
+				end
 			elseif pl.coin and not any_start then
 				-- no Start buttons on the board at all (a coin joins the game): the player's
 				-- usual Start (MAME's default mapping for START<p>) just drops a coin in for that player
@@ -160,9 +178,15 @@ function freeplay.startplugin()
 			if keepframe > keep.after and keep.space:read_u8(keep.addr) < keep.min then keep.space:write_u8(keep.addr, keep.min) end
 			return
 		end
-		for _, pl in pairs(players) do
-			local down = input:seq_pressed(pl.seq)
-			if down and not pl.down and not pl.frame then
+		for p, pl in pairs(players) do
+			-- the charselect plugin can move a player's Start onto another slot (charselect_start[p], '' = none)
+			local down = input:seq_pressed((charselect_start and charselect_start[p]) or pl.seq)
+			local flipped = false
+			for _, tg in ipairs(pl.toggles or { }) do
+				local on = input:code_pressed(tg.code)
+				if on ~= tg.on then flipped = true; tg.on = on end
+			end
+			if ((down and not pl.down) or flipped) and not pl.frame then
 				pl.frame = 0
 				emu.print_verbose('freeplay: start pressed, inserting coin')
 			end
@@ -170,7 +194,9 @@ function freeplay.startplugin()
 			if pl.frame then
 				pl.frame = pl.frame + 1
 				local f = pl.frame
-				if f <= COIN_END then pl.coin:set_value(1) else pl.coin:clear_value() end
+				for _, c in ipairs(pl.coins) do
+					if f <= COIN_END then c:set_value(1) else c:clear_value() end
+				end
 				if pl.start then
 					if f >= START_BEGIN and f <= START_END then pl.start:set_value(1) else pl.start:clear_value() end
 				end

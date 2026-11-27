@@ -24,6 +24,41 @@ local HOLD = 0.45          -- seconds LOAD must be held to open the picker
 local BOOT_DELAY = 0.2     -- emulated seconds before the start-up picker opens
 local COLS = 5
 
+-- Games whose drivers aren't flagged as supporting save states, but whose saves were checked to load back exactly
+-- (local.lua beside this file: return { allow = { '<set or parent>', ... } }). MAME itself saves them anyway, with
+-- a "not officially supported" warning; without this list the plugin refuses.
+local ALLOW = { }
+do
+	local ok, t = pcall(function()
+		local p = manager.plugins['savestates']
+		return dofile(((p and p.directory) or 'plugins/savestates') .. '/local.lua')
+	end)
+	if ok and type(t) == 'table' then
+		for _, g in ipairs(t.allow or { }) do ALLOW[g] = true end
+	elseif not ok and not tostring(t):find('No such file') and not tostring(t):find('cannot open') then
+		emu.print_error('savestates: local.lua: ' .. tostring(t))
+	end
+end
+
+-- While the picker is showing, the file named by env ARCADE_MENU_MARKER exists: the launcher sets that variable for
+-- the MAME it starts, and turns ReShade's CRT effect off while the file is there, since the picker is unreadable
+-- through it. Without the variable (MAME started by hand, test runs) there is no marker.
+local MARKER = os.getenv('ARCADE_MENU_MARKER')
+local function marker(on)
+	if not MARKER or MARKER == '' then return end
+	if on then
+		local f = io.open(MARKER, 'w'); if f then f:write('1'); f:close() end
+	else
+		os.remove(MARKER)
+	end
+end
+marker(false)
+
+local function can_save()
+	local s = manager.machine.system
+	return s.supports_save ~= false or ALLOW[s.name] or (s.parent and ALLOW[s.parent]) or false
+end
+
 function savestates.startplugin()
 	local sys, snapdir                -- current set, its screenshot folder
 	local slots = { }                 -- [n] = unix time of the save
@@ -91,7 +126,7 @@ function savestates.startplugin()
 	local function stamp(t) return os.date('%b %d  %I:%M:%S %p', t):gsub(' 0(%d:)', ' %1') end
 
 	local function do_save()
-		if manager.machine.system.supports_save == false then
+		if not can_save() then
 			manager.machine:popmessage('This game does not support save states')
 			return
 		end
@@ -118,6 +153,7 @@ function savestates.startplugin()
 		for _, e in ipairs(menu.entries) do if e.tex then e.tex:free() end end
 		if not menu.was_paused then emu.unpause() end
 		menu = nil
+		marker(false)
 	end
 
 	-- boot = true: the picker shown when a game with saves starts. It gets a "start from the beginning" tile first
@@ -146,6 +182,7 @@ function savestates.startplugin()
 		if boot then table.insert(entries, 1, { fresh = true }) end
 		menu = { entries = entries, sel = boot and 2 or 1, boot = boot, was_paused = manager.machine.paused }
 		if not menu.was_paused then emu.pause() end
+		marker(true)
 		nav_was = { left = true, right = true, up = true, down = true, ok = true, back = true, start = true }
 	end
 
@@ -256,7 +293,7 @@ function savestates.startplugin()
 		-- warning screen (which holds the machine) is gone first.
 		if boot_pending and manager.machine.time:as_double() >= BOOT_DELAY then
 			boot_pending = false
-			if manager.machine.system.supports_save ~= false and next(slots) then open_menu(true) end
+			if can_save() and next(slots) then open_menu(true) end
 		end
 		local s = seq_down(save_seq)
 		local l = seq_down(load_seq)

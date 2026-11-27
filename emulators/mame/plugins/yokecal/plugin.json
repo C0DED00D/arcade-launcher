@@ -1,0 +1,10 @@
+{
+	"plugin": {
+		"name": "yokecal",
+		"description": "Arcade launcher: teach self-calibrating yoke games the full stick range at boot",
+		"version": "1.0",
+		"author": "Arcade launcher",
+		"type": "plugin",
+		"start": "false"
+	  }
+}

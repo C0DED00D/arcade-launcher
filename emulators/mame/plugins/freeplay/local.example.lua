@@ -13,4 +13,10 @@ local CREDIT_KEEP = {
 	-- examplegame = { cpu = ':maincpu', addr = 0x00E0, min = 1, after = 12 },
 }
 
-return { native = NATIVE, credit_keep = CREDIT_KEEP }
+-- toggles: input codes wired to on/off switches instead of buttons. If one is in a player's Start mapping, flipping
+--         it either way counts as pressing Start (it may already be on when the game boots).
+local TOGGLES = {
+	-- 'JOYCODE_3_BUTTON5',
+}
+
+return { native = NATIVE, credit_keep = CREDIT_KEEP, toggles = TOGGLES }

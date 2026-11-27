@@ -21,6 +21,8 @@ sealed class GameRunner
         _paths = paths; Game = g; _input = input;
         _saveKey = new(0x75, 0x40, input.SaveState);   // F6
         _loadKey = new(0x76, 0x41, input.LoadState);   // F7
+        _pauseKey = new(0x50, 0x19, input.Pause);      // P = MAME's UI_PAUSE
+        _pauseSwitch = new(0x50, 0x19, input.PauseSwitch);
         var psi = g.System switch
         {
             "jaguar" => JaguarStart(paths, g, s),
@@ -155,7 +157,7 @@ sealed class GameRunner
     {
         var args = new StringBuilder(g.Set);
         // Controls: ctrlr\launcher.cfg, written from config\input.json "Mame" (unless Generate is off: then mame.ini's ctrlr)
-        if (MameCtrlr.Write(input, paths.MameDir)) args.Append(" -ctrlr ").Append(MameCtrlr.Name);
+        if (MameCtrlr.Write(input, paths.MameDir, g)) args.Append(" -ctrlr ").Append(MameCtrlr.Name);
         // In-game CRT look. Raster games: CRT-Guest-Advanced through ReShade (emulators\mame\d3d9.dll, preset
         // reshade\GuestCRT.ini). Vector games keep MAME's HLSL (ini\vector.ini): scanlines don't belong on a vector screen.
         bool guest = false;
@@ -180,12 +182,19 @@ sealed class GameRunner
         if (!s.FreePlay) args.Append(" -noplugin freeplay");
         StripTakenOverStart(paths, g.Set);
         if (!string.IsNullOrWhiteSpace(s.MameExtraArgs)) args.Append(' ').Append(s.MameExtraArgs);
-        return new ProcessStartInfo(paths.MameExe, args.ToString())
+        var psi = new ProcessStartInfo(paths.MameExe, args.ToString())
         {
             WorkingDirectory = paths.MameDir, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardError = true, RedirectStandardOutput = true,
         };
+        // plugins\savestates and plugins\charselect create this file while their screens are up (see ReShadeForPicker).
+        // Only this MAME gets the path, so another MAME (a test run) can't switch this game's CRT effect.
+        try { File.Delete(MenuMarker(paths)); } catch { }
+        psi.Environment["ARCADE_MENU_MARKER"] = MenuMarker(paths);
+        return psi;
     }
+
+    static string MenuMarker(Paths paths) => Path.Combine(Path.GetTempPath(), "arcade-launcher-menu.open");
 
     /// <summary>
     /// Turns ReShade on or off for MAME (renaming d3d9.dll) and tells CRT-Guest the game's resolution. Guest resamples
@@ -252,11 +261,37 @@ sealed class GameRunner
             if (DateTime.Now > _closeAt) { Log.Write("emulator didn't close, killing it"); try { _proc.Kill(); } catch { } _closeAt = DateTime.MaxValue; }
             return;
         }
-        if (Game.System == "arcade") { DismissWarning(); StateKeys(); }
+        if (Game.System == "arcade") { DismissWarning(); StateKeys(); ReShadeForPicker(); }
         InputDevices.Poll();
+        if (_saveExitAt is DateTime at)
+        {
+            if (DateTime.Now >= at) { _saveExitAt = null; Close("exit combo held (saved)"); }
+            return;
+        }
         _held = _input.ExitGame.IsDown(GameInput.Key) ? _held + dt : 0;
         HoldProgress = Math.Min(1, _held / holdSeconds);
-        if (_held >= holdSeconds) Close("exit combo held");
+        if (_held >= holdSeconds)
+        {
+            if (SavesOnExit()) SaveThenClose();
+            else Close("exit combo held");
+        }
+    }
+
+    // input.json Mame.SaveOnExit: leaving with the exit combo first presses the save key (F6, plugins\savestates; it
+    // saves even while MAME is paused), then closes MAME once the save has had time to be written.
+    DateTime? _saveExitAt;
+    bool SavesOnExit() => Game.System == "arcade" && _input.Mame.SaveOnExit.Any(s => s == "*" ||
+        s.Equals(Game.Set, StringComparison.OrdinalIgnoreCase) || s.Equals(Game.CloneOf, StringComparison.OrdinalIgnoreCase));
+    void SaveThenClose()
+    {
+        Win32.GetWindowThreadProcessId(Win32.GetForegroundWindow(), out uint fgPid);
+        if (fgPid != (uint)_proc.Id) { Close("exit combo held (not saved: MAME didn't have the focus)"); return; }
+        if (_saveKey.Down) _saveKey.Release();
+        _saveKey.Press();
+        Thread.Sleep(120); // MAME reads keys once a frame: hold long enough to be seen (StateKeys doesn't run while waiting)
+        _saveKey.Release();
+        _saveExitAt = DateTime.Now.AddSeconds(1.5);
+        Log.Write("exit combo held: saving a state before closing");
     }
 
     // MAME stops on a "known problems with this system - press any key" screen the first time a game with
@@ -295,7 +330,9 @@ sealed class GameRunner
     // Save states (MAME plugins\savestates listens for F6 = save, F7 = load; a held F7 opens its picker).
     // input.json Hotkeys.SaveState / LoadState (default: right / left stick click; held = picker). The key mirrors the binding, held for at
     // least 100 ms so MAME (which reads keys once a frame) never misses a quick click, and only while MAME has the focus.
-    readonly StateKey _saveKey, _loadKey;
+    // Hotkeys.Pause (none by default) is pressed as P the same way, so a mouse button or pad combo can pause MAME
+    // even in games that run with mouse input off.
+    readonly StateKey _saveKey, _loadKey, _pauseKey;
     sealed class StateKey(byte vk, byte scan, InputBindings binding)
     {
         public bool Down; public DateTime At;
@@ -307,14 +344,56 @@ sealed class GameRunner
     {
         Win32.GetWindowThreadProcessId(Win32.GetForegroundWindow(), out uint fgPid);
         bool focused = fgPid == (uint)_proc.Id;
-        foreach (var k in new[] { _saveKey, _loadKey })
+        foreach (var k in new[] { _saveKey, _loadKey, _pauseKey })
         {
             bool held = focused && k.PadHeld();
             if (held && !k.Down) k.Press();
             else if (!held && k.Down && (DateTime.Now - k.At).TotalMilliseconds >= 100) k.Release();
         }
+        PauseSwitch(focused);
     }
-    void ReleaseStateKeys() { if (_saveKey.Down) _saveKey.Release(); if (_loadKey.Down) _loadKey.Release(); }
+
+    // Hotkeys.PauseSwitch: an on/off switch (the Star Wars yoke's power switch). Turning it on pauses MAME, turning it
+    // off resumes, by tapping P. Only changes count, so the position it's in at launch does nothing, and a switch
+    // turned off while the game runs leaves it running.
+    readonly StateKey _pauseSwitch;
+    bool? _switchOn;
+    bool _switchPaused;
+    void PauseSwitch(bool focused)
+    {
+        bool on = _pauseSwitch.PadHeld();
+        if (_pauseSwitch.Down && (DateTime.Now - _pauseSwitch.At).TotalMilliseconds >= 100) _pauseSwitch.Release();
+        if (_switchOn == null) { _switchOn = on; return; }
+        if (on == _switchOn) return;
+        _switchOn = on;
+        bool wantPaused = on;
+        if (wantPaused == _switchPaused || !focused || _pauseSwitch.Down) return;
+        _pauseSwitch.Press();
+        _switchPaused = wantPaused;
+        Log.Write(wantPaused ? "pause switch on: pausing" : "pause switch off: resuming");
+    }
+    // The save-state picker is unreadable through the CRT shader. plugins\savestates (and charselect) create the marker
+    // file (MenuMarker, passed to MAME in ARCADE_MENU_MARKER) while their screens show;
+    // tap ReShade's toggle-effects key (F13, ReShade.ini KeyEffects=124) when that appears and again when it goes.
+    // ReShade only hooks input once MAME's window is up, so the first tap waits a moment after the window appears.
+    bool _effectsOff;
+    DateTime? _f13UpAt;
+    void ReShadeForPicker()
+    {
+        if (_f13UpAt is DateTime up) { if (DateTime.Now >= up) { Win32.keybd_event(0x7C, 0x64, 2, UIntPtr.Zero); _f13UpAt = null; } return; }
+        if (!File.Exists(Path.Combine(_paths.MameDir, "d3d9.dll"))) return; // ReShade isn't on for this game
+        bool open = File.Exists(MenuMarker(_paths));
+        if (open == _effectsOff) return;
+        if (_windowSeen == null || (DateTime.Now - _windowSeen.Value).TotalSeconds < 1.5) return;
+        Win32.GetWindowThreadProcessId(Win32.GetForegroundWindow(), out uint fgPid);
+        if (fgPid != (uint)_proc.Id) return;
+        Win32.keybd_event(0x7C, 0x64, 0, UIntPtr.Zero);
+        _f13UpAt = DateTime.Now.AddMilliseconds(100);
+        _effectsOff = open;
+        Log.Write(open ? "save picker open: CRT effect off" : "save picker closed: CRT effect back on");
+    }
+
+    void ReleaseStateKeys() { foreach (var k in new[] { _saveKey, _loadKey, _pauseKey, _pauseSwitch }) if (k.Down) k.Release(); }
 
     public void Close(string why)
     {

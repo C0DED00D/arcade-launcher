@@ -45,6 +45,13 @@
 !/emulators/mame/plugins/freeplay/
 !/emulators/mame/plugins/savestates/
 /emulators/mame/plugins/freeplay/local.lua
+/emulators/mame/plugins/savestates/local.lua
+/emulators/mame/plugins/savestates/menu.open
+!/emulators/mame/plugins/yokecal/
+/emulators/mame/plugins/yokecal/local.lua
+!/emulators/mame/plugins/charselect/
+/emulators/mame/plugins/charselect/local.lua
+/emulators/mame/plugins/charselect/undo_*.txt
 
 !/emulators/flycast/
 /emulators/flycast/*
