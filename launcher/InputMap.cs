@@ -628,7 +628,9 @@ static class MameCtrlr
     {
         if (k >= Keys.A && k <= Keys.Z) return k.ToString();
         if (k >= Keys.D0 && k <= Keys.D9) return ((int)(k - Keys.D0)).ToString();
-        if (k >= Keys.NumPad0 && k <= Keys.NumPad9) return (int)(k - Keys.NumPad0) + "_PAD";
+        // Keypad names have no underscore (KEYCODE_8PAD, KEYCODE_PLUSPAD). MAME 0.289 drops a misspelt token from a
+        // ctrlr file with "Dropping invalid input token", and parsing one sometimes crashes it at startup.
+        if (k >= Keys.NumPad0 && k <= Keys.NumPad9) return (int)(k - Keys.NumPad0) + "PAD";
         if (k >= Keys.F1 && k <= Keys.F24) return k.ToString();
         return k switch
         {
@@ -642,7 +644,7 @@ static class MameCtrlr
             Keys.OemMinus => "MINUS", Keys.Oemplus => "EQUALS", Keys.OemOpenBrackets => "OPENBRACE", Keys.OemCloseBrackets => "CLOSEBRACE",
             Keys.OemSemicolon => "COLON", Keys.OemQuotes => "QUOTE", Keys.Oemcomma => "COMMA", Keys.OemPeriod => "STOP",
             Keys.OemQuestion => "SLASH", Keys.OemPipe => "BACKSLASH", Keys.Oemtilde => "TILDE",
-            Keys.Multiply => "ASTERISK", Keys.Add => "PLUS_PAD", Keys.Subtract => "MINUS_PAD", Keys.Divide => "SLASH_PAD", Keys.Decimal => "DEL_PAD",
+            Keys.Multiply => "ASTERISK", Keys.Add => "PLUSPAD", Keys.Subtract => "MINUSPAD", Keys.Divide => "SLASHPAD", Keys.Decimal => "DELPAD",
             Keys.CapsLock => "CAPSLOCK", Keys.NumLock => "NUMLOCK", Keys.Scroll => "SCRLOCK", Keys.Pause => "PAUSE", Keys.PrintScreen => "PRTSCR",
             _ => null,
         };
