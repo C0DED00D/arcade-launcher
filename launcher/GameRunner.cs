@@ -16,7 +16,7 @@ sealed class GameRunner
     readonly InputConfig _input;
     public GameInfo Game { get; }
 
-    public GameRunner(Paths paths, GameInfo g, Settings s, InputConfig input)
+    public GameRunner(Paths paths, GameInfo g, Settings s, InputConfig input, Seating? seats = null)
     {
         _paths = paths; Game = g; _input = input;
         _saveKey = new(0x75, 0x40, input.SaveState);   // F6
@@ -28,7 +28,7 @@ sealed class GameRunner
             "jaguar" => JaguarStart(paths, g, s),
             "dreamcast" => FlycastStart(paths, g, s),
             "saturn" => MednafenStart(paths, g),
-            _ => MameStart(paths, g, s, input),
+            _ => MameStart(paths, g, s, input, seats),
         };
         Log.Write($"start: {Path.GetFileNameWithoutExtension(psi.FileName)} {psi.Arguments}");
         _proc = Process.Start(psi)!;
@@ -153,11 +153,15 @@ sealed class GameRunner
         File.WriteAllLines(file, lines);
     }
 
-    static ProcessStartInfo MameStart(Paths paths, GameInfo g, Settings s, InputConfig input)
+    static ProcessStartInfo MameStart(Paths paths, GameInfo g, Settings s, InputConfig input, Seating? seats)
     {
         var args = new StringBuilder(g.Set);
-        // Controls: ctrlr\launcher.cfg, written from config\input.json "Mame" (unless Generate is off: then mame.ini's ctrlr)
-        if (MameCtrlr.Write(input, paths.MameDir, g)) args.Append(" -ctrlr ").Append(MameCtrlr.Name);
+        // Controls: ctrlr\launcher.cfg, written from config\input.json "Mame" (unless Generate is off: then mame.ini's
+        // ctrlr), with the character select's choices for this run
+        if (MameCtrlr.Write(input, paths.MameDir, g, seats)) args.Append(" -ctrlr ").Append(MameCtrlr.Name);
+        // DirectInput controllers (the Bliss-Box: P3/P4) only reach MAME while its window has the focus, unlike XInput
+        // pads; Windows doesn't always let the launcher hand MAME the focus, so read them regardless.
+        args.Append(" -background_input");
         // In-game CRT look. Raster games: CRT-Guest-Advanced through ReShade (emulators\mame\d3d9.dll, preset
         // reshade\GuestCRT.ini). Vector games keep MAME's HLSL (ini\vector.ini): scanlines don't belong on a vector screen.
         bool guest = false;
@@ -187,10 +191,12 @@ sealed class GameRunner
             WorkingDirectory = paths.MameDir, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardError = true, RedirectStandardOutput = true,
         };
-        // plugins\savestates and plugins\charselect create this file while their screens are up (see ReShadeForPicker).
+        // plugins\savestates creates this file while its picker is up (see ReShadeForPicker).
         // Only this MAME gets the path, so another MAME (a test run) can't switch this game's CRT effect.
         try { File.Delete(MenuMarker(paths)); } catch { }
         psi.Environment["ARCADE_MENU_MARKER"] = MenuMarker(paths);
+        // character select: slots nobody plays, so plugins\freeplay doesn't give them a Start button back
+        if (seats != null) psi.Environment["ARCADE_SLOTS_OFF"] = string.Join(",", seats.Off(g.Characters.Count));
         return psi;
     }
 
@@ -213,10 +219,14 @@ sealed class GameRunner
             // (exactly the picture, so no widening), so scanlines run along the game's real lines.
             int rotate = g.Rotate == 90 ? 1 : g.Rotate == 270 ? 2 : 0;
             int resX = g.Width, resY = g.Height;
+            // Several screens side by side (ini\<set>.ini picks MAME's gapless view): one picture Screens x 4:3 wide. A
+            // picture wider than the monitor is letterboxed, so then the lines are spread over more than its height.
             if (rotate == 0)
             {
                 var screen = System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
-                resX = (int)Math.Round(g.Width * Math.Max(1.0, (double)screen.Width / screen.Height / (4.0 / 3.0)));
+                double mon = (double)screen.Width / screen.Height, pic = 4.0 / 3.0 * g.Screens;
+                resX = (int)Math.Round(g.Width * g.Screens * Math.Max(1.0, mon / pic));
+                resY = (int)Math.Round(g.Height * Math.Max(1.0, pic / mon));
             }
             var preset = Path.Combine(paths.MameDir, "reshade", "GuestCRT.ini");
             var lines = File.Exists(preset) ? File.ReadAllLines(preset).ToList() : new List<string> { "Techniques=CRT_Guest_Advanced@CRT-Guest-Advanced.fx" };
@@ -224,7 +234,7 @@ sealed class GameRunner
             int at = lines.FindIndex(l => l.StartsWith("PreprocessorDefinitions=", StringComparison.OrdinalIgnoreCase));
             if (at >= 0) lines[at] = def; else lines.Insert(Math.Min(2, lines.Count), def);
             File.WriteAllLines(preset, lines);
-            Log.Write($"CRT-Guest: {g.Width}x{g.Height} rotate {g.Rotate} -> GUEST_ROTATE {rotate}, Resolution {resX}x{resY}");
+            Log.Write($"CRT-Guest: {g.Width}x{g.Height}{(g.Screens > 1 ? $" x{g.Screens} screens" : "")} rotate {g.Rotate} -> GUEST_ROTATE {rotate}, Resolution {resX}x{resY}");
         }
         catch (Exception e) { Log.Write("ReShade setup for MAME failed: " + e.Message); }
     }
@@ -372,8 +382,8 @@ sealed class GameRunner
         _switchPaused = wantPaused;
         Log.Write(wantPaused ? "pause switch on: pausing" : "pause switch off: resuming");
     }
-    // The save-state picker is unreadable through the CRT shader. plugins\savestates (and charselect) create the marker
-    // file (MenuMarker, passed to MAME in ARCADE_MENU_MARKER) while their screens show;
+    // The save-state picker is unreadable through the CRT shader. plugins\savestates creates the marker
+    // file (MenuMarker, passed to MAME in ARCADE_MENU_MARKER) while its picker shows;
     // tap ReShade's toggle-effects key (F13, ReShade.ini KeyEffects=124) when that appears and again when it goes.
     // ReShade only hooks input once MAME's window is up, so the first tap waits a moment after the window appears.
     bool _effectsOff;

@@ -99,9 +99,14 @@ function freeplay.startplugin()
 
 		-- 2. coin on start
 		local coins, starts = { }, { }
-		for p = 1, 4 do
-			coins[ioport:token_to_input_type('COIN' .. p)] = p
-			starts[ioport:token_to_input_type('START' .. p)] = p
+		-- slots the launcher's character select switched off (ARCADE_SLOTS_OFF="3,5,6"): their Start stays empty
+		local off = { }
+		for n in (os.getenv('ARCADE_SLOTS_OFF') or ''):gmatch('%d+') do off[tonumber(n)] = true end
+		for p = 1, 8 do
+			if not off[p] then
+				coins[ioport:token_to_input_type('COIN' .. p)] = p
+				starts[ioport:token_to_input_type('START' .. p)] = p
+			end
 		end
 		for _, port in pairs(ioport.ports) do
 			for _, field in pairs(port.fields) do
@@ -134,6 +139,11 @@ function freeplay.startplugin()
 					-- never empty: MAME saves the emptied mapping in the game's .cfg on exit (the launcher strips it
 					-- before each launch, but be safe) - fall back to the arcade.cfg mapping
 					local tokens = input:seq_to_tokens(copy)
+					if tokens == '' or tokens == 'NONE' then
+						copy = ioport:type_seq(ioport:token_to_input_type('START' .. p))
+						tokens = input:seq_to_tokens(copy)
+					end
+					-- (MAME's built-in mapping only as a last resort: JOYCODE_<p> isn't necessarily player p's controller)
 					if tokens == '' or tokens == 'NONE' then
 						copy = input:seq_from_tokens('KEYCODE_' .. p .. ' OR JOYCODE_' .. p .. '_START')
 					end
@@ -179,8 +189,7 @@ function freeplay.startplugin()
 			return
 		end
 		for p, pl in pairs(players) do
-			-- the charselect plugin can move a player's Start onto another slot (charselect_start[p], '' = none)
-			local down = input:seq_pressed((charselect_start and charselect_start[p]) or pl.seq)
+			local down = input:seq_pressed(pl.seq)
 			local flipped = false
 			for _, tg in ipairs(pl.toggles or { }) do
 				local on = input:code_pressed(tg.code)

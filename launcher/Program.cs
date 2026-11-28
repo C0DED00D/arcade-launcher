@@ -12,6 +12,7 @@ class Options
     public List<Act> Acts = new(); // --acts filter,right,down,...: menu presses to make on entering the menu
     public bool InputTest;         // --input-test: show the binding name of every control pressed
     public bool WriteCtrlr;        // --write-ctrlr: write config\input.json (if missing) and MAME's ctrlr\launcher.cfg, then quit
+    public List<string> CsActs = new(); // --cs 1R,2OK,1OK,...: character select presses (player + L / R / OK / BACK), one every 0.25 s
 
     public static Options Parse(string[] a)
     {
@@ -30,6 +31,7 @@ class Options
                 case "--quit-after-shot": o.QuitAfterShot = true; break;
                 case "--input-test": o.InputTest = true; break;
                 case "--write-ctrlr": o.WriteCtrlr = true; break;
+                case "--cs": o.CsActs = (next ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(); i++; break;
                 case "--acts":
                     foreach (var s in (next ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                         if (Enum.TryParse<Act>(s, true, out var act)) o.Acts.Add(act);

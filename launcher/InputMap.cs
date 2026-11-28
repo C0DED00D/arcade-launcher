@@ -542,7 +542,62 @@ static class MameCtrlr
 {
     public const string Name = "launcher";
 
-    public static bool Write(InputConfig cfg, string mameDir, GameInfo? launching = null)
+    /// <summary>
+    /// The port bindings a game ends up with (Ports, then FewButtons if it qualifies, then Games entries for its parent
+    /// and itself), as the launcher reads them (CharSelect uses each player's).
+    /// </summary>
+    public static Dictionary<string, List<string>> EffectivePorts(InputConfig cfg, GameInfo g)
+    {
+        var d = new Dictionary<string, List<string>>(cfg.Mame.Ports, StringComparer.OrdinalIgnoreCase);
+        if (g.Buttons > 0 && g.Buttons <= cfg.Mame.FewButtonsMax) foreach (var (k, v) in cfg.Mame.FewButtons) d[k] = v;
+        foreach (var set in new[] { g.CloneOf, g.Set })
+        {
+            if (string.IsNullOrEmpty(set)) continue;
+            foreach (var (key, ports) in cfg.Mame.Games)
+                if (key.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(set, StringComparer.OrdinalIgnoreCase))
+                    foreach (var (k, v) in ports) d[k] = v;
+        }
+        return d;
+    }
+
+    /// <summary>
+    /// A Ports binding as the launcher must read it. In Ports, JoyN is MAME's controller N (JOYCODE_N), which Devices
+    /// can pin to a device; the launcher numbers joysticks in Windows' order, which differs (the X-Arcade's two halves
+    /// come first there). So "Joy4.Button1" with JOYCODE_4 pinned to "Gamer-Pro Advanced.1" becomes
+    /// "Joy[Gamer-Pro Advanced.1].Button1". Unpinned numbers are left as they are.
+    /// </summary>
+    public static IEnumerable<string> ForLauncher(IEnumerable<string> bindings, InputConfig cfg) =>
+        bindings.Select(b => Regex.Replace(b, @"\bJoy(\d+)\.", m =>
+            cfg.Mame.Devices.TryGetValue("JOYCODE_" + m.Groups[1].Value, out var dev) && !dev.Contains(']')
+                ? $"Joy[{dev}]." : m.Value, RegexOptions.IgnoreCase));
+
+    /// <summary>
+    /// Character select: each slot a player chose gets that player's controls (joystick, buttons, Start, coin); a slot
+    /// whose own player went elsewhere and nobody chose gets nothing. Returned as port changes for the game's section.
+    /// </summary>
+    static Dictionary<string, List<string>> Seat(Dictionary<string, List<string>> eff, Seating seats, int slots)
+    {
+        var off = seats.Off(slots).ToHashSet();
+        // the kinds of control any player has ("_JOYSTICK_UP", "_BUTTON3", "START", "COIN"), as P<n><kind> / <kind><n>
+        var kinds = new HashSet<string>();
+        foreach (var type in eff.Keys)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(type.ToUpperInvariant(), @"^P[1-4](_.+)$|^(START|COIN)[1-4]$");
+            if (m.Success) kinds.Add(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value);
+        }
+        static string Type(string kind, int p) => kind.StartsWith('_') ? $"P{p}{kind}" : $"{kind}{p}";
+        var r = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        for (int slot = 1; slot <= Math.Max(4, slots); slot++)
+        {
+            bool chosen = seats.SideOfSlot.TryGetValue(slot, out int side);
+            if (!chosen && !off.Contains(slot)) continue;     // its own player stayed out: leave it be
+            foreach (var kind in kinds)
+                r[Type(kind, slot)] = chosen ? eff.GetValueOrDefault(Type(kind, side)) ?? new() : new();
+        }
+        return r;
+    }
+
+    public static bool Write(InputConfig cfg, string mameDir, GameInfo? launching = null, Seating? seats = null)
     {
         if (!cfg.Mame.Generate) return false;
         try
@@ -574,6 +629,13 @@ static class MameCtrlr
                     if (!string.IsNullOrEmpty(set) && games.TryGetValue(set, out var own))
                         foreach (var (type, list) in own) merged[type] = list;
                 games[g.Set] = merged;
+            }
+            // character select: players' controls moved onto the slots they chose, for this run only
+            if (launching != null && seats != null)
+            {
+                if (!games.TryGetValue(launching.Set, out var own)) games[launching.Set] = own = new();
+                foreach (var (type, list) in Seat(EffectivePorts(cfg, launching), seats, launching.Characters.Count)) own[type] = list;
+                Log.Write($"character select {launching.Set}: {seats}");
             }
             foreach (var (set, ports) in games)
             {

@@ -57,6 +57,181 @@ class MenuScreen
         if (done) _f.Draw(C, "TEST COMPLETE", 64, y + 8, 2, Yellow);
     }
 
+    // ---------------------------------------------------------------- character select
+
+    static readonly uint[] PlayerCol = { Canvas.Rgb(70, 130, 255), Canvas.Rgb(255, 70, 70), Canvas.Rgb(60, 210, 90), Canvas.Rgb(255, 200, 40) };
+
+    /// <summary>One card per character, a cursor and a status panel per player (CharSelect).</summary>
+    public void DrawCharSelect(CharSelect cs, double t)
+    {
+        DrawBackground(t);
+        double since = t - cs.OpenedAt;
+        var chars = cs.Game.Characters;
+        int n = chars.Count;
+        float pulse = (float)(0.5 + 0.5 * Math.Sin(t * 5));
+
+        // heading: the game, then a bobbing rainbow title like the menu's logo
+        _f.DrawCentered(C, Fit(GameTags.ShortTitle(cs.Game.Title).ToUpperInvariant(), W - 80, 2), W / 2, 14, 2, Grey, 1, Shadow);
+        const string title = "SELECT YOUR CHARACTER";
+        int tx0 = W / 2 - _f.Measure(title, 4) / 2;
+        for (int i = 0; i < title.Length; i++)
+        {
+            string ch = title[i].ToString();
+            int bob = (int)Math.Round(Math.Sin(t * 2.6 + i * 0.45) * 2);
+            uint col = Canvas.Mix(Canvas.Hsv((float)(t * 0.1 + i * 0.035), 0.7f, 1f), White, 0.15f);
+            _f.Draw(C, ch, tx0 + 3, 42 + bob + 3, 4, Shadow);
+            _f.Draw(C, ch, tx0, 42 + bob, 4, col);
+            tx0 += _f.Measure(ch, 4);
+        }
+        for (int px = 160; px < W - 160; px++)
+        {
+            float edge = Math.Min(px - 160, W - 160 - px) / 120f;
+            C.Plot(px, 98, Canvas.Hsv((float)(px / 900.0 - t * 0.15), 0.8f, 0.9f), Math.Min(1, edge));
+        }
+
+        // character cards
+        const int cardY = 126, cardH = 316, gap = 28, margin = 48;
+        int cardW = Math.Min(270, (W - 2 * margin - gap * (n - 1)) / n);
+        int x0 = (W - (n * cardW + (n - 1) * gap)) / 2;
+        for (int i = 0; i < n; i++)
+        {
+            var chr = chars[i];
+            uint col = chr.Color;
+            var on = Enumerable.Range(0, cs.Sides).Where(s => cs.Joined[s] && cs.Cur[s] == i).ToList();
+            int? lockS = cs.LockedOn(i);
+            bool lit = on.Count > 0;
+            int cx = x0 + i * (cardW + gap);
+            double enter = Math.Clamp((since - i * 0.07) / 0.4, 0, 1);       // cards rise into place in turn
+            int cy = cardY + (int)(Math.Pow(1 - enter, 3) * 260) - (lit && lockS == null ? (int)Math.Round(4 + 3 * Math.Sin(t * 4)) : 0);
+
+            if (lit)
+            {
+                uint gc = lockS is int gl ? PlayerCol[gl] : col;
+                float strength = lockS != null ? 0.55f : 0.3f + 0.25f * pulse;
+                for (int k = 1; k <= 12; k++) FrameA(cx - k, cy - k, cardW + 2 * k, cardH + 2 * k, gc, strength * (1 - k / 13f) * 0.6f);
+            }
+            uint top = Canvas.Mix(Canvas.Rgb(8, 8, 18), col, lit ? 0.85f : 0.35f), bottom = Canvas.Rgb(6, 6, 14);
+            for (int yy = 0; yy < cardH; yy++) C.Fill(cx, cy + yy, cardW, 1, Canvas.Mix(top, bottom, MathF.Pow(yy / (float)cardH, 0.75f)));
+
+            // emblem: a ring with the character's initial
+            int rcx = cx + cardW / 2, rcy = cy + 116, rad = Math.Min(cardW / 2 - 20, 90);
+            Disc(rcx, rcy, rad, Canvas.Mix(col, White, lit ? 0.2f : 0f), lit ? 0.5f : 0.22f);
+            Disc(rcx, rcy, rad - 7, Black, 0.55f);
+            int sc = Math.Clamp(rad / 8, 3, 12);
+            uint ic = lit ? Canvas.Mix(col, White, 0.45f) : Canvas.Mix(col, Grey, 0.55f);
+            _f.DrawCentered(C, chr.Name[..1], rcx + sc / 2, rcy - 6 * sc, sc, ic, 1, Canvas.Mix(col, Black, 0.75f));
+
+            // a sheen sweeping across the card a cursor is on
+            if (lit && lockS == null)
+            {
+                int band = (int)(t * 300 % (cardW + cardH + 300)) - 150;
+                for (int yy = 0; yy < cardH; yy++)
+                {
+                    int bx = Math.Max(cx, cx + band - yy / 2), bw = Math.Min(cx + cardW, cx + band - yy / 2 + 28) - bx;
+                    if (bw > 0) C.Fill(bx, cy + yy, bw, 1, White, 0.09f);
+                }
+            }
+
+            // name plate
+            int py = cy + cardH - 62;
+            C.Fill(cx, py, cardW, 62, Black, 0.55f);
+            C.Fill(cx, py, cardW, 3, col);
+            int ns = _f.Measure(chr.Name, 3) <= cardW - 16 ? 3 : 2;
+            _f.DrawCentered(C, Fit(chr.Name, cardW - 12, ns), cx + cardW / 2, py + (62 - 11 * ns) / 2 + 2, ns, lit ? White : Grey, 1, Shadow);
+            C.Frame(cx, cy, cardW, cardH, lockS is int fl ? PlayerCol[fl] : lit ? Canvas.Mix(col, White, 0.35f + 0.5f * pulse) : Canvas.Rgb(50, 50, 70), 3);
+
+            // taken: a banner in the player's colour, flashing white as it lands
+            if (lockS is int lk)
+            {
+                float f = (float)Math.Clamp(1 - (t - cs.Flash[lk]) * 3, 0, 1);
+                int by = cy + 196;
+                C.Fill(cx, by, cardW, 44, Canvas.Mix(PlayerCol[lk], White, f));
+                C.Fill(cx, by + 44, cardW, 3, Black, 0.45f);
+                string txt = $"P{lk + 1} READY";
+                int s3 = _f.Measure(txt, 3) <= cardW - 16 ? 3 : 2;
+                _f.DrawCentered(C, txt, cx + cardW / 2, by + (44 - 11 * s3) / 2 + 2, s3, White, 1, Shadow);
+            }
+
+            // the players on this card: an arrow and a tag each
+            const int tagW = 58, tagGap = 8;
+            int tagX = cx + (cardW - (on.Count * tagW + (on.Count - 1) * tagGap)) / 2;
+            foreach (int s in on)
+            {
+                int ty = cardY + cardH + 12 + (cs.Ready[s] ? 0 : (int)Math.Round(3 * Math.Sin(t * 7 + s * 1.3)));
+                for (int a = 0; a < 8; a++) C.Fill(tagX + tagW / 2 - a, ty + a, 2 * a + 1, 1, PlayerCol[s]);
+                int tby = ty + 9;
+                if (cs.Ready[s]) C.Fill(tagX, tby, tagW, 30, PlayerCol[s]);
+                else { C.Fill(tagX, tby, tagW, 30, Black, 0.8f); C.Frame(tagX, tby, tagW, 30, PlayerCol[s], 2); }
+                _f.DrawCentered(C, $"P{s + 1}", tagX + tagW / 2, tby + 7, 2, White, 1, Shadow);
+                tagX += tagW + tagGap;
+            }
+        }
+
+        // one panel per player
+        const int panY = 524, panH = 56, tagw = 64;
+        int pw = Math.Min(300, (W - 2 * margin - gap * (cs.Sides - 1)) / cs.Sides);
+        int px0 = (W - (cs.Sides * pw + (cs.Sides - 1) * gap)) / 2;
+        for (int s = 0; s < cs.Sides; s++)
+        {
+            int px = px0 + s * (pw + gap);
+            uint pc = PlayerCol[s];
+            string label; uint tc;
+            if (!cs.Joined[s])
+            {
+                C.Fill(px, panY, pw, panH, Black, 0.6f);
+                C.Frame(px, panY, pw, panH, Canvas.Mix(pc, Black, 0.55f), 2);
+                label = "PRESS START"; tc = ((int)(t * 2) & 1) == 0 ? White : Dim;
+            }
+            else if (cs.Ready[s])
+            {
+                C.Fill(px, panY, pw, panH, Canvas.Mix(pc, Black, 0.3f));
+                C.Frame(px, panY, pw, panH, Canvas.Mix(pc, White, 0.5f), 2);
+                label = chars[cs.Cur[s]].Name; tc = White;
+            }
+            else
+            {
+                C.Fill(px, panY, pw, panH, Canvas.Mix(pc, Black, 0.82f));
+                C.Frame(px, panY, pw, panH, pc, 2);
+                label = "CHOOSING"; tc = Canvas.Mix(White, pc, pulse * 0.6f);
+            }
+            C.Fill(px, panY, tagw, panH, cs.Joined[s] ? pc : Canvas.Mix(pc, Black, 0.5f));
+            _f.DrawCentered(C, $"P{s + 1}", px + tagw / 2, panY + (panH - 33) / 2 + 1, 3, White, 1, Shadow);
+            _f.DrawCentered(C, Fit(label, pw - tagw - 14, 2), px + tagw + (pw - tagw) / 2, panY + (panH - 22) / 2 + 2, 2, tc, 1, Shadow);
+        }
+        if (cs.GoAt is double go)
+        {
+            int left = Math.Max(1, (int)Math.Ceiling(go - t));
+            float beat = (float)((go - t) % 1);
+            string msg = $"STARTING IN {left}";
+            int bw = _f.Measure(msg, 3) + 48;
+            C.Fill((W - bw) / 2, 596, bw, 44, Black, 0.75f);
+            C.Frame((W - bw) / 2, 596, bw, 44, Canvas.Mix(Yellow, White, beat), 2);
+            _f.DrawCentered(C, msg, W / 2, 604, 3, Canvas.Mix(Yellow, White, beat), 1, Shadow);
+        }
+        else _f.DrawCentered(C, "The game starts when everyone who joined is ready", W / 2, 606, 2, Grey, 1, Shadow);
+
+        const int fy = 668;
+        C.Fill(0, fy, W, H - fy, Black, 0.6f);
+        for (int px = 0; px < W; px++) C.Plot(px, fy, Canvas.Rgb(50, 50, 70));
+        _f.Draw(C, "Stick: choose    Button 1 / Start: join, ready    Button 2: back    P1 button 2: menu", 24, fy + 16, 2, Grey);
+    }
+
+    /// <summary>A one-pixel outline, blended.</summary>
+    void FrameA(int x, int y, int w, int h, uint c, float a)
+    {
+        C.Fill(x, y, w, 1, c, a); C.Fill(x, y + h - 1, w, 1, c, a);
+        C.Fill(x, y + 1, 1, h - 2, c, a); C.Fill(x + w - 1, y + 1, 1, h - 2, c, a);
+    }
+
+    void Disc(int cx, int cy, int r, uint c, float a)
+    {
+        for (int dy = -r; dy <= r; dy++)
+        {
+            int dx = (int)Math.Sqrt(r * r - dy * dy);
+            C.Fill(cx - dx, cy + dy, 2 * dx + 1, 1, c, a);
+        }
+    }
+
     // ---------------------------------------------------------------- main menu
 
     public void DrawMenu(MenuModel m, double t)

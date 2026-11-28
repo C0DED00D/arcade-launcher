@@ -11,6 +11,14 @@
     "version": "US",                 // the small text after the title
     "hidden": false                  // true leaves it out of the menu
   },
+  // A game whose player slots are fixed characters (P1 is always the same hero): a character select comes first, and
+  // each player's controls are moved onto the slot they chose. One entry per slot, in slot order; clones use it too.
+  "simpsons": {
+    "characters": [
+      { "name": "MARGE", "color": "#d83040" }, { "name": "HOMER", "color": "#3a6ad8" },
+      { "name": "BART",  "color": "#30a040" }, { "name": "LISA",  "color": "#e08020" }
+    ]
+  },
   "dc_exampledisc": {
     "title": "Example Disc Game",
     "year": "2000",

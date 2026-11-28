@@ -25,6 +25,7 @@ public class GameInfo
     public int Rotate { get; set; }
     public int Width { get; set; }                  // native raster size (before rotation), for the CRT shader
     public int Height { get; set; }
+    public int Screens { get; set; } = 1;           // monitors (X-Men 6P: 2, shown side by side with no gap)
     public string Emulation { get; set; } = "";     // MAME driver status: good / imperfect / preliminary
     public bool Runnable { get; set; }
     public List<string> Missing { get; set; } = new();
@@ -38,6 +39,12 @@ public class GameInfo
     [System.Text.Json.Serialization.JsonIgnore] public Dictionary<string, string> Flycast { get; set; } = new();
     /// <summary>Dreamcast games: run with the ReShade CRT filter (config\games.json "crt": true). Off unless asked for.</summary>
     [System.Text.Json.Serialization.JsonIgnore] public bool Crt { get; set; }
+    /// <summary>
+    /// Games whose player slots are fixed characters (config\games.json "characters", one per slot in slot order; a
+    /// clone uses its parent's): the launcher shows a character select first (CharSelect).
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore] public List<Character> Characters { get; set; } = new();
+    public sealed record Character(string Name, uint Color);
 
     public string ControlText()
     {
@@ -286,6 +293,17 @@ class Library
             using var doc = JsonDocument.Parse(File.ReadAllText(_paths.GameOverrides), new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
             foreach (var g in games)
             {
+                // "characters": [ { "name": "LEONARDO", "color": "#2a5ad0" }, ... ] on the set, else on its parent
+                foreach (var set in new[] { g.Set, g.CloneOf })
+                {
+                    if (set == "" || !doc.RootElement.TryGetProperty(set, out var co) || !co.TryGetProperty("characters", out var chs)
+                        || chs.ValueKind != JsonValueKind.Array) continue;
+                    g.Characters = chs.EnumerateArray().Select(c => new GameInfo.Character(
+                        (c.TryGetProperty("name", out var n) ? n.GetString() : null) ?? "?",
+                        c.TryGetProperty("color", out var cl) && cl.GetString() is string hex && uint.TryParse(hex.TrimStart('#'),
+                            System.Globalization.NumberStyles.HexNumber, null, out uint rgb) ? 0xFF000000u | (rgb & 0xFFFFFF) : 0xFFA0A0A0u)).ToList();
+                    break;
+                }
                 if (!doc.RootElement.TryGetProperty(g.Set, out var o)) continue;
                 if (o.TryGetProperty("title", out var t)) g.Title = t.GetString() ?? g.Title;
                 if (o.TryGetProperty("hidden", out var h)) g.Hidden = h.GetBoolean();
@@ -390,6 +408,7 @@ class Library
             g.Rotate = int.TryParse(disp?.Attributes?["rotate"]?.Value, out int rot) ? rot : 0;
             g.Width = int.TryParse(disp?.Attributes?["width"]?.Value, out int dw) ? dw : 0;
             g.Height = int.TryParse(disp?.Attributes?["height"]?.Value, out int dh) ? dh : 0;
+            g.Screens = Math.Max(1, m.SelectNodes("display")?.Count ?? 1);
             g.Emulation = m.SelectSingleNode("driver")?.Attributes?["status"]?.Value ?? "";
             return true;
         }

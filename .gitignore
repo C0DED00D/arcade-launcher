@@ -49,9 +49,6 @@
 /emulators/mame/plugins/savestates/menu.open
 !/emulators/mame/plugins/yokecal/
 /emulators/mame/plugins/yokecal/local.lua
-!/emulators/mame/plugins/charselect/
-/emulators/mame/plugins/charselect/local.lua
-/emulators/mame/plugins/charselect/undo_*.txt
 
 !/emulators/flycast/
 /emulators/flycast/*

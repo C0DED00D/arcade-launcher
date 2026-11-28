@@ -3,7 +3,7 @@ using System.Drawing.Imaging;
 
 namespace ArcadeLauncher;
 
-enum Mode { Boot, Menu, Launching, InGame, Returning, Exiting }
+enum Mode { Boot, Menu, CharSelect, Launching, InGame, Returning, Exiting }
 
 /// <summary>The full-screen window: runs the frame loop, the menu logic and the hand-over to MAME.</summary>
 sealed class MainForm : Form
@@ -23,6 +23,8 @@ sealed class MainForm : Form
     Mode _mode = Mode.Boot;
     double _last, _power, _modeAt;
     GameRunner? _runner;
+    CharSelect? _cs;        // character select before a fixed-character game (Mode.CharSelect)
+    Seating? _seats;        // ...and what it decided, for the launch
     readonly List<(string, string)> _bootLines = new();
     volatile bool _bootDone;
     Exception? _bootError;
@@ -142,9 +144,12 @@ sealed class MainForm : Form
                 MenuTick(now);
                 _screen.DrawMenu(_model, now);
                 break;
+            case Mode.CharSelect:
+                CharSelectTick(now);
+                break;
             case Mode.Launching:
                 _power = Math.Max(0, 1 - inMode / 0.45);
-                _screen.DrawMenu(_model, now);
+                if (_cs != null) _screen.DrawCharSelect(_cs, now); else _screen.DrawMenu(_model, now);
                 if (_power <= 0) StartGame();
                 break;
             case Mode.Returning:
@@ -274,7 +279,48 @@ sealed class MainForm : Form
         _settings.LastGame = g.Set;
         _settings.Save(_paths.Settings);
         _sounds.Coin();
+        _cs = null; _seats = null;
+        if (g.System == "arcade" && g.Characters.Count > 1)
+        {
+            _cs = new CharSelect(g, _inputCfg, now) { Sound = Play };
+            if (_opt.CsActs.Count > 0) _cs.Script(_opt.CsActs, now);
+            SetMode(Mode.CharSelect);
+            return;
+        }
         SetMode(Mode.Launching);
+    }
+
+    void Play(string what)
+    {
+        switch (what)
+        {
+            case "move": _sounds.Move(); break;
+            case "toggle": _sounds.Toggle(); break;
+            case "back": _sounds.Back(); break;
+            case "buzz": _sounds.Buzz(); break;
+        }
+    }
+
+    void CharSelectTick(double now)
+    {
+        var cs = _cs!;
+        var r = cs.Update(now);
+        while (_input.Next(out var a)) if (a == Act.Exit) r = CharSelect.Result.Cancel;
+        _screen.DrawCharSelect(cs, now);
+        if (r == CharSelect.Result.Done)
+        {
+            _seats = cs.Seats();
+            _sounds.Coin();
+            SetMode(Mode.Launching);
+        }
+        else if (r == CharSelect.Result.Cancel)
+        {
+            _cs = null;
+            _input.Flush();
+            _sounds.Back();
+            _model.SelectedAt = now;
+            SetMode(Mode.Menu);
+        }
     }
 
     void StartGame()
@@ -285,7 +331,7 @@ sealed class MainForm : Form
         _crt!.Render(_screen.C.Pix, ClientSize.Width, ClientSize.Height, 0, 0, _settings.Crt, _settings.MenuCrt);
         try
         {
-            _runner = new GameRunner(_paths, g, _settings, _inputCfg);
+            _runner = new GameRunner(_paths, g, _settings, _inputCfg, _seats);
             SetMode(Mode.InGame);
         }
         catch (Exception ex)
@@ -294,6 +340,7 @@ sealed class MainForm : Form
             Toast("MAME wouldn't start", _clock.Elapsed.TotalSeconds);
             SetMode(Mode.Returning);
         }
+        _cs = null; _seats = null;
     }
 
     void GameTick(double dt)
